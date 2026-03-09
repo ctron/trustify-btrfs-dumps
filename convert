@@ -26,6 +26,7 @@ PG_USER="${PG_USER:-trustify}"
 PG_DATA="${SCRIPT_DIR}/pg-data"
 PG_CONTAINER="trustify-pg-import"
 
+BTRFS_SIZE="100G"
 LOOP_DEV=""
 
 cleanup() {
@@ -108,7 +109,6 @@ podman rm "${PG_CONTAINER}"
 
 echo "==> Setting up btrfs loopback volume"
 
-BTRFS_SIZE="20G"
 truncate -s "${BTRFS_SIZE}" "${BTRFS_IMG}"
 mkfs.btrfs -f "${BTRFS_IMG}"
 
