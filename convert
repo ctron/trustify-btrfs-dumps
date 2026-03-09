@@ -12,11 +12,6 @@ if [[ $# -lt 1 ]]; then
     usage
 fi
 
-if [[ "${EUID}" -ne 0 ]]; then
-    echo "Error: this script must be run as root" >&2
-    exit 1
-fi
-
 DUMP_ID="$1"
 BASE_URL="https://trustify-dumps-ds4.s3.eu-west-1.amazonaws.com/${DUMP_ID}"
 
@@ -29,16 +24,13 @@ PG_VERSION="${PG_VERSION:-16}"
 PG_DB="${PG_DB:-trustify}"
 PG_USER="${PG_USER:-trustify}"
 PG_DATA="${SCRIPT_DIR}/pg-data"
-PG_SOCKET_DIR="${SCRIPT_DIR}/pg-socket"
+PG_CONTAINER="trustify-pg-import"
 
 LOOP_DEV=""
 
 cleanup() {
-    if pg_lsclusters -h 2>/dev/null | grep -q "^${PG_VERSION}"; then
-        pg_ctlcluster "${PG_VERSION}" trustify stop 2>/dev/null || true
-        pg_dropcluster "${PG_VERSION}" trustify 2>/dev/null || true
-    fi
-    rm -rf "${PG_SOCKET_DIR}" "${PG_DATA}"
+    podman rm -f "${PG_CONTAINER}" 2>/dev/null || true
+    rm -rf "${PG_DATA}"
     if [[ -n "${LOOP_DEV}" ]]; then
         if mountpoint -q "${BTRFS_MNT}" 2>/dev/null; then
             btrfs subvolume delete "${BTRFS_MNT}/snapshot" 2>/dev/null || true
@@ -78,33 +70,41 @@ download() {
 download dump.tar
 download dump.sql.xz
 
-echo "==> Starting temporary PostgreSQL ${PG_VERSION} instance"
+echo "==> Starting PostgreSQL ${PG_VERSION} container"
 
-mkdir -p "${PG_SOCKET_DIR}"
 mkdir -p "${PG_DATA}"
-chown postgres:postgres "${PG_DATA}"
-chmod 700 "${PG_DATA}"
 
-pg_createcluster "${PG_VERSION}" trustify \
-    --datadir="${PG_DATA}" \
-    -- \
-    -c unix_socket_directories="${PG_SOCKET_DIR}" \
-    -c listen_addresses=''
+podman run -d \
+    --name "${PG_CONTAINER}" \
+    -e POSTGRES_DB="${PG_DB}" \
+    -e POSTGRES_USER="${PG_USER}" \
+    -e POSTGRES_PASSWORD=trustify \
+    -e PGDATA=/pgdata \
+    -v "${PG_DATA}:/pgdata:z" \
+    "docker.io/postgres:${PG_VERSION}"
 
-pg_ctlcluster "${PG_VERSION}" trustify start
+echo "==> Waiting for PostgreSQL to be ready"
 
-runuser -u postgres -- createuser --host="${PG_SOCKET_DIR}" "${PG_USER}" 2>/dev/null || true
-runuser -u postgres -- createdb  --host="${PG_SOCKET_DIR}" --owner="${PG_USER}" "${PG_DB}"
+for i in $(seq 30); do
+    if podman exec "${PG_CONTAINER}" pg_isready -U "${PG_USER}" -d "${PG_DB}" &>/dev/null; then
+        break
+    fi
+    if [[ "${i}" -eq 30 ]]; then
+        echo "Error: PostgreSQL did not become ready in time" >&2
+        exit 1
+    fi
+    sleep 2
+done
 
 echo "==> Importing dump.sql.xz"
 
 xz --decompress --stdout "${DOWNLOAD_DIR}/dump.sql.xz" \
-    | runuser -u postgres -- psql --host="${PG_SOCKET_DIR}" "${PG_DB}"
+    | podman exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}"
 
-echo "==> Stopping PostgreSQL"
+echo "==> Stopping PostgreSQL container"
 
-pg_ctlcluster "${PG_VERSION}" trustify stop
-pg_dropcluster "${PG_VERSION}" trustify
+podman stop "${PG_CONTAINER}"
+podman rm "${PG_CONTAINER}"
 
 echo "==> Setting up btrfs loopback volume"
 
