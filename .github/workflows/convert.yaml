@@ -14,4 +14,4 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Convert dump
-        run: ./convert "${{ inputs.id }}"
+        run: sudo ./convert "${{ inputs.id }}"
