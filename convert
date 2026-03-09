@@ -13,7 +13,9 @@ if [[ $# -lt 1 ]]; then
 fi
 
 DUMP_ID="$1"
-BASE_URL="https://trustify-dumps-ds4.s3.eu-west-1.amazonaws.com/${DUMP_ID}"
+S3_BUCKET="${S3_BUCKET:-trustify-dumps-ds4}"
+S3_REGION="${S3_REGION:-eu-west-1}"
+BASE_URL="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${DUMP_ID}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOWNLOAD_DIR="${SCRIPT_DIR}/download"
