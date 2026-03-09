@@ -28,7 +28,7 @@ BTRFS_MNT="${SCRIPT_DIR}/mnt"
 PG_VERSION="${PG_VERSION:-16}"
 PG_DB="${PG_DB:-trustify}"
 PG_USER="${PG_USER:-trustify}"
-PG_DATA="${BTRFS_MNT}/data/db"
+PG_DATA="${SCRIPT_DIR}/pg-data"
 PG_SOCKET_DIR="${SCRIPT_DIR}/pg-socket"
 
 LOOP_DEV=""
@@ -38,7 +38,7 @@ cleanup() {
         pg_ctlcluster "${PG_VERSION}" trustify stop 2>/dev/null || true
         pg_dropcluster "${PG_VERSION}" trustify 2>/dev/null || true
     fi
-    rm -rf "${PG_SOCKET_DIR}"
+    rm -rf "${PG_SOCKET_DIR}" "${PG_DATA}"
     if [[ -n "${LOOP_DEV}" ]]; then
         if mountpoint -q "${BTRFS_MNT}" 2>/dev/null; then
             btrfs subvolume delete "${BTRFS_MNT}/snapshot" 2>/dev/null || true
@@ -47,7 +47,7 @@ cleanup() {
         fi
         losetup -d "${LOOP_DEV}" 2>/dev/null || true
     fi
-    rm -rf "${DOWNLOAD_DIR}" "${BTRFS_MNT}" "${BTRFS_IMG}"
+    rm -rf "${BTRFS_MNT}" "${BTRFS_IMG}"
 }
 trap cleanup EXIT
 
@@ -78,32 +78,13 @@ download() {
 download dump.tar
 download dump.sql.xz
 
-echo "==> Setting up btrfs loopback volume"
-
-BTRFS_SIZE="20G"
-truncate -s "${BTRFS_SIZE}" "${BTRFS_IMG}"
-mkfs.btrfs -f "${BTRFS_IMG}"
-
-LOOP_DEV="$(losetup --find --show "${BTRFS_IMG}")"
-
-mkdir -p "${BTRFS_MNT}"
-mount -o loop,noatime,ssd "${LOOP_DEV}" "${BTRFS_MNT}"
-chmod 755 "${BTRFS_MNT}"
-
-echo "==> btrfs volume mounted at ${BTRFS_MNT} (loop device: ${LOOP_DEV})"
-
-echo "==> Extracting dump.tar into btrfs volume"
-
-btrfs subvolume create "${BTRFS_MNT}/data"
-chmod 755 "${BTRFS_MNT}/data"
-mkdir -p "${BTRFS_MNT}/data/storage" "${PG_DATA}"
-tar -xf "${DOWNLOAD_DIR}/dump.tar" -C "${BTRFS_MNT}/data/storage"
-chown postgres:postgres "${PG_DATA}"
-chmod 700 "${PG_DATA}"
-
 echo "==> Starting temporary PostgreSQL ${PG_VERSION} instance"
 
 mkdir -p "${PG_SOCKET_DIR}"
+mkdir -p "${PG_DATA}"
+chown postgres:postgres "${PG_DATA}"
+chmod 700 "${PG_DATA}"
+
 pg_createcluster "${PG_VERSION}" trustify \
     --datadir="${PG_DATA}" \
     -- \
@@ -123,6 +104,31 @@ xz --decompress --stdout "${DOWNLOAD_DIR}/dump.sql.xz" \
 echo "==> Stopping PostgreSQL"
 
 pg_ctlcluster "${PG_VERSION}" trustify stop
+pg_dropcluster "${PG_VERSION}" trustify
+
+echo "==> Setting up btrfs loopback volume"
+
+BTRFS_SIZE="20G"
+truncate -s "${BTRFS_SIZE}" "${BTRFS_IMG}"
+mkfs.btrfs -f "${BTRFS_IMG}"
+
+LOOP_DEV="$(losetup --find --show "${BTRFS_IMG}")"
+
+mkdir -p "${BTRFS_MNT}"
+mount -o loop,noatime,ssd "${LOOP_DEV}" "${BTRFS_MNT}"
+
+echo "==> btrfs volume mounted at ${BTRFS_MNT} (loop device: ${LOOP_DEV})"
+
+btrfs subvolume create "${BTRFS_MNT}/data"
+
+echo "==> Extracting dump.tar into btrfs volume"
+
+mkdir -p "${BTRFS_MNT}/data/storage"
+tar -xf "${DOWNLOAD_DIR}/dump.tar" -C "${BTRFS_MNT}/data/storage"
+
+echo "==> Moving PostgreSQL data into btrfs volume"
+
+mv "${PG_DATA}" "${BTRFS_MNT}/data/db"
 
 echo "==> Creating readonly snapshot and sending archive"
 
