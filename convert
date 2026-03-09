@@ -95,6 +95,7 @@ echo "==> Extracting dump.tar into btrfs volume"
 
 btrfs subvolume create "${BTRFS_MNT}/storage"
 tar -xf "${DOWNLOAD_DIR}/dump.tar" -C "${BTRFS_MNT}/storage"
+chown -R postgres:postgres "${BTRFS_MNT}/storage"
 
 echo "==> Starting temporary PostgreSQL ${PG_VERSION} instance"
 
