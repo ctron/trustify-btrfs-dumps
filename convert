@@ -20,7 +20,7 @@ DOWNLOAD_DIR="${SCRIPT_DIR}/download"
 BTRFS_IMG="${SCRIPT_DIR}/btrfs.img"
 BTRFS_MNT="${SCRIPT_DIR}/mnt"
 
-PG_VERSION="${PG_VERSION:-16}"
+PG_VERSION="${PG_VERSION:-17}"
 PG_DB="${PG_DB:-trustify}"
 PG_USER="${PG_USER:-trustify}"
 PG_DATA="${SCRIPT_DIR}/pg-data"
