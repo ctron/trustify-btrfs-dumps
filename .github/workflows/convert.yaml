@@ -13,5 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Cache download
+        uses: actions/cache@v4
+        with:
+          path: download
+          key: download-${{ inputs.id }}
+
       - name: Convert dump
         run: sudo ./convert "${{ inputs.id }}"
