@@ -23,7 +23,6 @@ BTRFS_MNT="${SCRIPT_DIR}/mnt"
 PG_VERSION="${PG_VERSION:-17}"
 PG_DB="${PG_DB:-trustify}"
 PG_USER="${PG_USER:-trustify}"
-PG_DATA="${SCRIPT_DIR}/pg-data"
 PG_CONTAINER="trustify-pg-import"
 
 BTRFS_SIZE="100G"
@@ -31,7 +30,6 @@ LOOP_DEV=""
 
 cleanup() {
     podman rm -f "${PG_CONTAINER}" 2>/dev/null || true
-    rm -rf "${PG_DATA}"
     if [[ -n "${LOOP_DEV}" ]]; then
         if mountpoint -q "${BTRFS_MNT}" 2>/dev/null; then
             btrfs subvolume delete "${BTRFS_MNT}/snapshot" 2>/dev/null || true
@@ -71,9 +69,23 @@ download() {
 download dump.tar
 download dump.sql.xz
 
-echo "==> Starting PostgreSQL ${PG_VERSION} container"
+echo "==> Setting up btrfs loopback volume"
 
-mkdir -p "${PG_DATA}"
+truncate -s "${BTRFS_SIZE}" "${BTRFS_IMG}"
+mkfs.btrfs -f "${BTRFS_IMG}"
+
+LOOP_DEV="$(losetup --find --show "${BTRFS_IMG}")"
+
+mkdir -p "${BTRFS_MNT}"
+mount -o loop,noatime,ssd "${LOOP_DEV}" "${BTRFS_MNT}"
+
+echo "==> btrfs volume mounted at ${BTRFS_MNT} (loop device: ${LOOP_DEV})"
+
+btrfs subvolume create "${BTRFS_MNT}/data"
+mkdir -p "${BTRFS_MNT}/data/storage" "${BTRFS_MNT}/data/db"
+chown 999:999 "${BTRFS_MNT}/data/db"
+
+echo "==> Starting PostgreSQL ${PG_VERSION} container"
 
 podman run -d \
     --name "${PG_CONTAINER}" \
@@ -81,8 +93,12 @@ podman run -d \
     -e POSTGRES_USER="${PG_USER}" \
     -e POSTGRES_PASSWORD=trustify \
     -e PGDATA=/pgdata \
-    -v "${PG_DATA}:/pgdata:z" \
-    "docker.io/postgres:${PG_VERSION}"
+    -v "${BTRFS_MNT}/data/db:/pgdata:z" \
+    "docker.io/postgres:${PG_VERSION}" \
+    -c synchronous_commit=off \
+    -c maintenance_work_mem=1GB \
+    -c max_wal_size=4GB \
+    -c checkpoint_completion_target=0.9
 
 echo "==> Waiting for PostgreSQL to be ready"
 
@@ -97,46 +113,35 @@ for i in $(seq 30); do
     sleep 2
 done
 
+podman exec "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" -c "CREATE ROLE postgres SUPERUSER LOGIN;"
+
 echo "==> Importing dump.sql.xz"
 
 xz --decompress --stdout "${DOWNLOAD_DIR}/dump.sql.xz" \
     | podman exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}"
+
+echo "==> Running VACUUM ANALYZE"
+
+podman exec "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" -c "VACUUM ANALYZE;"
 
 echo "==> Stopping PostgreSQL container"
 
 podman stop "${PG_CONTAINER}"
 podman rm "${PG_CONTAINER}"
 
-echo "==> Setting up btrfs loopback volume"
-
-truncate -s "${BTRFS_SIZE}" "${BTRFS_IMG}"
-mkfs.btrfs -f "${BTRFS_IMG}"
-
-LOOP_DEV="$(losetup --find --show "${BTRFS_IMG}")"
-
-mkdir -p "${BTRFS_MNT}"
-mount -o loop,noatime,ssd "${LOOP_DEV}" "${BTRFS_MNT}"
-
-echo "==> btrfs volume mounted at ${BTRFS_MNT} (loop device: ${LOOP_DEV})"
-
-btrfs subvolume create "${BTRFS_MNT}/data"
-
 echo "==> Extracting dump.tar into btrfs volume"
 
-mkdir -p "${BTRFS_MNT}/data/storage"
 tar -xf "${DOWNLOAD_DIR}/dump.tar" -C "${BTRFS_MNT}/data/storage"
 
-echo "==> Moving PostgreSQL data into btrfs volume"
-
-mv "${PG_DATA}" "${BTRFS_MNT}/data/db"
-
-echo "==> Creating readonly snapshot and sending archive"
+echo "==> Creating readonly snapshot"
 
 SNAPSHOT="${BTRFS_MNT}/snapshot"
 btrfs subvolume snapshot -r "${BTRFS_MNT}/data" "${SNAPSHOT}"
 
-SEND_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.btrfs.xz"
-btrfs send "${SNAPSHOT}" | xz --threads=0 > "${SEND_ARCHIVE}"
+echo "==> Creating FS archive"
+
+SEND_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.btrfs.zstd"
+btrfs send "${SNAPSHOT}" | zstd -19 -T0 > "${SEND_ARCHIVE}"
 
 echo "==> btrfs send archive written to: ${SEND_ARCHIVE}"
 
