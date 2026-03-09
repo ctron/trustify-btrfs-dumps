@@ -2,4 +2,4 @@
 /mnt
 /*.img
 /download
-*.btrfs.xz
+*.btrfs.*
