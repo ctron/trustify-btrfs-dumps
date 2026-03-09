@@ -68,7 +68,7 @@ download() {
         return
     fi
 
-    curl --fail --location --progress-bar \
+    curl --fail --location \
         -o "${tmp}" \
         "${BASE_URL}/$1"
     mv "${tmp}" "${dest}"
