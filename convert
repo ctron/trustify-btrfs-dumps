@@ -141,7 +141,7 @@ btrfs subvolume snapshot -r "${BTRFS_MNT}/data" "${SNAPSHOT}"
 echo "==> Creating FS archive"
 
 SEND_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.btrfs.zstd"
-btrfs send "${SNAPSHOT}" | zstd -19 -T0 > "${SEND_ARCHIVE}"
+btrfs send "${SNAPSHOT}" | zstd -5 -T0 > "${SEND_ARCHIVE}"
 
 echo "==> btrfs send archive written to: ${SEND_ARCHIVE}"
 
