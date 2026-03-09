@@ -1,0 +1,17 @@
+name: convert
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: The ID of the dump to convert
+        required: true
+        type: string
+
+jobs:
+  convert:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Convert dump
+        run: ./convert "${{ inputs.id }}"
