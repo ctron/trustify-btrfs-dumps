@@ -28,7 +28,7 @@ BTRFS_MNT="${SCRIPT_DIR}/mnt"
 PG_VERSION="${PG_VERSION:-16}"
 PG_DB="${PG_DB:-trustify}"
 PG_USER="${PG_USER:-trustify}"
-PG_DATA="${BTRFS_MNT}/storage/postgresql"
+PG_DATA="${BTRFS_MNT}/data/db"
 PG_SOCKET_DIR="${SCRIPT_DIR}/pg-socket"
 
 LOOP_DEV=""
@@ -42,7 +42,7 @@ cleanup() {
     if [[ -n "${LOOP_DEV}" ]]; then
         if mountpoint -q "${BTRFS_MNT}" 2>/dev/null; then
             btrfs subvolume delete "${BTRFS_MNT}/snapshot" 2>/dev/null || true
-            btrfs subvolume delete "${BTRFS_MNT}/storage"  2>/dev/null || true
+            btrfs subvolume delete "${BTRFS_MNT}/data"     2>/dev/null || true
             umount "${BTRFS_MNT}"
         fi
         losetup -d "${LOOP_DEV}" 2>/dev/null || true
@@ -88,14 +88,18 @@ LOOP_DEV="$(losetup --find --show "${BTRFS_IMG}")"
 
 mkdir -p "${BTRFS_MNT}"
 mount -o loop,noatime,ssd "${LOOP_DEV}" "${BTRFS_MNT}"
+chmod 755 "${BTRFS_MNT}"
 
 echo "==> btrfs volume mounted at ${BTRFS_MNT} (loop device: ${LOOP_DEV})"
 
 echo "==> Extracting dump.tar into btrfs volume"
 
-btrfs subvolume create "${BTRFS_MNT}/storage"
-tar -xf "${DOWNLOAD_DIR}/dump.tar" -C "${BTRFS_MNT}/storage"
-chown -R postgres:postgres "${BTRFS_MNT}/storage"
+btrfs subvolume create "${BTRFS_MNT}/data"
+chmod 755 "${BTRFS_MNT}/data"
+mkdir -p "${BTRFS_MNT}/data/storage" "${PG_DATA}"
+tar -xf "${DOWNLOAD_DIR}/dump.tar" -C "${BTRFS_MNT}/data/storage"
+chown postgres:postgres "${PG_DATA}"
+chmod 700 "${PG_DATA}"
 
 echo "==> Starting temporary PostgreSQL ${PG_VERSION} instance"
 
@@ -123,7 +127,7 @@ pg_ctlcluster "${PG_VERSION}" trustify stop
 echo "==> Creating readonly snapshot and sending archive"
 
 SNAPSHOT="${BTRFS_MNT}/snapshot"
-btrfs subvolume snapshot -r "${BTRFS_MNT}/storage" "${SNAPSHOT}"
+btrfs subvolume snapshot -r "${BTRFS_MNT}/data" "${SNAPSHOT}"
 
 SEND_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.btrfs.xz"
 btrfs send "${SNAPSHOT}" | xz --threads=0 > "${SEND_ARCHIVE}"
