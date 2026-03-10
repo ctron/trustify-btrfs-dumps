@@ -16,6 +16,15 @@ on:
         required: false
         default: eu-west-1
         type: string
+      storage_archive:
+        description: Name of the storage tar archive (optionally compressed)
+        required: false
+        default: dump.tar
+        type: string
+      strip_components:
+        description: Number of leading path components to strip when extracting
+        required: false
+        type: number
 
 jobs:
   convert:
@@ -33,7 +42,7 @@ jobs:
         env:
           S3_BUCKET: ${{ inputs.bucket }}
           S3_REGION: ${{ inputs.region }}
-        run: sudo --preserve-env=S3_BUCKET,S3_REGION ./convert "${{ inputs.id }}"
+        run: sudo --preserve-env=S3_BUCKET,S3_REGION ./convert "${{ inputs.id }}" "${{ inputs.storage_archive }}" "${{ inputs.strip_components }}"
 
       - name: Upload archive to S3
         env:
