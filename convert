@@ -27,28 +27,16 @@ BASE_URL="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${DUMP_ID}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOWNLOAD_DIR="${SCRIPT_DIR}/download"
-BTRFS_IMG="${SCRIPT_DIR}/btrfs.img"
-BTRFS_MNT="${SCRIPT_DIR}/mnt"
+WORK_DIR="${SCRIPT_DIR}/work"
 
 PG_VERSION="${PG_VERSION:-17}"
 PG_DB="${PG_DB:-trustify}"
 PG_USER="${PG_USER:-trustify}"
 PG_CONTAINER="trustify-pg-import"
 
-BTRFS_SIZE="100G"
-LOOP_DEV=""
-
 cleanup() {
     podman rm -f "${PG_CONTAINER}" 2>/dev/null || true
-    if [[ -n "${LOOP_DEV}" ]]; then
-        if mountpoint -q "${BTRFS_MNT}" 2>/dev/null; then
-            btrfs subvolume delete "${BTRFS_MNT}/snapshot" 2>/dev/null || true
-            btrfs subvolume delete "${BTRFS_MNT}/data"     2>/dev/null || true
-            umount "${BTRFS_MNT}"
-        fi
-        losetup -d "${LOOP_DEV}" 2>/dev/null || true
-    fi
-    rm -rf "${BTRFS_MNT}" "${BTRFS_IMG}"
+    rm -rf "${WORK_DIR}"
 }
 trap cleanup EXIT
 
@@ -79,21 +67,10 @@ download() {
 download "${STORAGE_ARCHIVE}"
 download "${DB_ARCHIVE}"
 
-echo "==> Setting up btrfs loopback volume"
+echo "==> Setting up work directory"
 
-truncate -s "${BTRFS_SIZE}" "${BTRFS_IMG}"
-mkfs.btrfs -f "${BTRFS_IMG}"
-
-LOOP_DEV="$(losetup --find --show "${BTRFS_IMG}")"
-
-mkdir -p "${BTRFS_MNT}"
-mount -o loop,noatime,ssd "${LOOP_DEV}" "${BTRFS_MNT}"
-
-echo "==> btrfs volume mounted at ${BTRFS_MNT} (loop device: ${LOOP_DEV})"
-
-btrfs subvolume create "${BTRFS_MNT}/data"
-mkdir -p "${BTRFS_MNT}/data/storage" "${BTRFS_MNT}/data/db"
-chown 999:999 "${BTRFS_MNT}/data/db"
+mkdir -p "${WORK_DIR}/storage" "${WORK_DIR}/db"
+chown 999:999 "${WORK_DIR}/db"
 
 echo "==> Starting PostgreSQL ${PG_VERSION} container"
 
@@ -103,7 +80,7 @@ podman run -d \
     -e POSTGRES_USER="${PG_USER}" \
     -e POSTGRES_PASSWORD=trustify \
     -e PGDATA=/pgdata \
-    -v "${BTRFS_MNT}/data/db:/pgdata:z" \
+    -v "${WORK_DIR}/db:/pgdata:z" \
     "docker.io/postgres:${PG_VERSION}" \
     -c synchronous_commit=off \
     -c maintenance_work_mem=1GB \
@@ -145,27 +122,20 @@ echo "==> Stopping PostgreSQL container"
 podman stop "${PG_CONTAINER}"
 podman rm "${PG_CONTAINER}"
 
-echo "==> Extracting dump.tar into btrfs volume"
+echo "==> Extracting ${STORAGE_ARCHIVE} into work directory"
 
-TAR_ARGS=(-xaf "${DOWNLOAD_DIR}/${STORAGE_ARCHIVE}" -C "${BTRFS_MNT}/data/storage")
+TAR_ARGS=(-xaf "${DOWNLOAD_DIR}/${STORAGE_ARCHIVE}" -C "${WORK_DIR}/storage")
 [[ -n "${STRIP_COMPONENTS}" ]] && TAR_ARGS+=(--strip-components="${STRIP_COMPONENTS}")
 tar "${TAR_ARGS[@]}"
 
-echo "==> Creating readonly snapshot"
+echo "==> Creating tar archive"
 
-SNAPSHOT="${BTRFS_MNT}/snapshot"
-btrfs subvolume snapshot -r "${BTRFS_MNT}/data" "${SNAPSHOT}"
+OUT_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.tar.xz"
+XZ_OPT="-T0" tar -caf "${OUT_ARCHIVE}" -C "${WORK_DIR}" db storage
 
-echo "==> Creating FS archive"
+echo "==> tar archive written to: ${OUT_ARCHIVE}"
 
-SEND_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.btrfs.zstd"
-btrfs send "${SNAPSHOT}" | zstd -5 -T0 > "${SEND_ARCHIVE}"
-
-echo "==> btrfs send archive written to: ${SEND_ARCHIVE}"
-
-sha256sum "${SEND_ARCHIVE}" > "${SEND_ARCHIVE}.sha256"
-echo "==> SHA256 checksum written to: ${SEND_ARCHIVE}.sha256"
-
-# TODO: Upload / publish the resulting btrfs snapshot
+sha256sum "${OUT_ARCHIVE}" > "${OUT_ARCHIVE}.sha256"
+echo "==> SHA256 checksum written to: ${OUT_ARCHIVE}.sha256"
 
 echo "==> Done."
