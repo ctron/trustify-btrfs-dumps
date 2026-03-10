@@ -130,7 +130,7 @@ tar "${TAR_ARGS[@]}"
 
 echo "==> Creating tar archive"
 
-OUT_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.tar.xz"
+OUT_ARCHIVE="${SCRIPT_DIR}/${DUMP_ID}.snapshot.tar.xz"
 XZ_OPT="-T0" tar -caf "${OUT_ARCHIVE}" -C "${WORK_DIR}" db storage
 
 echo "==> tar archive written to: ${OUT_ARCHIVE}"
