@@ -2,9 +2,11 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 <dump-id>"
+    echo "Usage: $0 <dump-id> [storage-archive] [strip-components]"
     echo ""
-    echo "  dump-id   Timestamp ID of the trustify dump (e.g. 20260303T120545Z)"
+    echo "  dump-id           Timestamp ID of the trustify dump (e.g. 20260303T120545Z)"
+    echo "  storage-archive   Name of the storage tar archive, optionally compressed (default: dump.tar)"
+    echo "  strip-components  Number of leading path components to strip when extracting (default: none)"
     exit 1
 }
 
@@ -13,6 +15,8 @@ if [[ $# -lt 1 ]]; then
 fi
 
 DUMP_ID="$1"
+STORAGE_ARCHIVE="${2:-dump.tar}"
+STRIP_COMPONENTS="${3:-}"
 S3_BUCKET="${S3_BUCKET:-trustify-dumps-ds4}"
 S3_REGION="${S3_REGION:-eu-west-1}"
 BASE_URL="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${DUMP_ID}"
@@ -68,7 +72,7 @@ download() {
     echo "${remote_etag}" > "${etag_file}"
 }
 
-download dump.tar
+download "${STORAGE_ARCHIVE}"
 download dump.sql.xz
 
 echo "==> Setting up btrfs loopback volume"
@@ -133,7 +137,9 @@ podman rm "${PG_CONTAINER}"
 
 echo "==> Extracting dump.tar into btrfs volume"
 
-tar -xf "${DOWNLOAD_DIR}/dump.tar" -C "${BTRFS_MNT}/data/storage"
+TAR_ARGS=(-xaf "${DOWNLOAD_DIR}/${STORAGE_ARCHIVE}" -C "${BTRFS_MNT}/data/storage")
+[[ -n "${STRIP_COMPONENTS}" ]] && TAR_ARGS+=(--strip-components="${STRIP_COMPONENTS}")
+tar "${TAR_ARGS[@]}"
 
 echo "==> Creating readonly snapshot"
 
