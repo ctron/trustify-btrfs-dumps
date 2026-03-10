@@ -163,6 +163,9 @@ btrfs send "${SNAPSHOT}" | zstd -5 -T0 > "${SEND_ARCHIVE}"
 
 echo "==> btrfs send archive written to: ${SEND_ARCHIVE}"
 
+sha256sum "${SEND_ARCHIVE}" > "${SEND_ARCHIVE}.sha256"
+echo "==> SHA256 checksum written to: ${SEND_ARCHIVE}.sha256"
+
 # TODO: Upload / publish the resulting btrfs snapshot
 
 echo "==> Done."
