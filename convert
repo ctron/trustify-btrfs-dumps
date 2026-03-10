@@ -2,11 +2,14 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 <dump-id> [storage-archive] [strip-components]"
+    echo "Usage: $0 <dump-id>"
     echo ""
-    echo "  dump-id           Timestamp ID of the trustify dump (e.g. 20260303T120545Z)"
-    echo "  storage-archive   Name of the storage tar archive, optionally compressed (default: dump.tar)"
-    echo "  strip-components  Number of leading path components to strip when extracting (default: none)"
+    echo "  dump-id   Timestamp ID of the trustify dump (e.g. 20260303T120545Z)"
+    echo ""
+    echo "  Environment variables:"
+    echo "    STORAGE_ARCHIVE   Name of the storage tar archive, optionally compressed (default: dump.tar)"
+    echo "    DB_ARCHIVE        Name of the DB SQL dump archive (default: dump.sql.xz)"
+    echo "    STRIP_COMPONENTS  Number of leading path components to strip when extracting storage archive (default: none)"
     exit 1
 }
 
@@ -15,8 +18,9 @@ if [[ $# -lt 1 ]]; then
 fi
 
 DUMP_ID="$1"
-STORAGE_ARCHIVE="${2:-dump.tar}"
-STRIP_COMPONENTS="${3:-}"
+STORAGE_ARCHIVE="${STORAGE_ARCHIVE:-dump.tar}"
+DB_ARCHIVE="${DB_ARCHIVE:-dump.sql.xz}"
+STRIP_COMPONENTS="${STRIP_COMPONENTS:-}"
 S3_BUCKET="${S3_BUCKET:-trustify-dumps-ds4}"
 S3_REGION="${S3_REGION:-eu-west-1}"
 BASE_URL="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${DUMP_ID}"
@@ -73,7 +77,7 @@ download() {
 }
 
 download "${STORAGE_ARCHIVE}"
-download dump.sql.xz
+download "${DB_ARCHIVE}"
 
 echo "==> Setting up btrfs loopback volume"
 
@@ -121,9 +125,15 @@ done
 
 podman exec "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}" -c "CREATE ROLE postgres SUPERUSER LOGIN;"
 
-echo "==> Importing dump.sql.xz"
+echo "==> Importing ${DB_ARCHIVE}"
 
-xz --decompress --stdout "${DOWNLOAD_DIR}/dump.sql.xz" \
+case "${DB_ARCHIVE}" in
+    *.xz)  decompress="xz --decompress --stdout" ;;
+    *.gz)  decompress="gzip --decompress --stdout" ;;
+    *)     decompress="cat" ;;
+esac
+
+${decompress} "${DOWNLOAD_DIR}/${DB_ARCHIVE}" \
     | podman exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${PG_DB}"
 
 echo "==> Running VACUUM ANALYZE"
