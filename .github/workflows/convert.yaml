@@ -30,6 +30,11 @@ on:
         description: Number of leading path components to strip when extracting storage archive
         required: false
         type: number
+      append_zstd_eof_marker:
+        description: Append zstd EOF marker to extracted .zst/.zstd files in storage archive
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   convert:
@@ -50,7 +55,8 @@ jobs:
           STORAGE_ARCHIVE: ${{ inputs.storage_archive }}
           DB_ARCHIVE: ${{ inputs.db_archive }}
           STRIP_COMPONENTS: ${{ inputs.strip_components }}
-        run: sudo --preserve-env=S3_BUCKET,S3_REGION,STORAGE_ARCHIVE,DB_ARCHIVE,STRIP_COMPONENTS ./convert "${{ inputs.id }}"
+          APPEND_ZSTD_EOF_MARKER: ${{ inputs.append_zstd_eof_marker }}
+        run: sudo --preserve-env=S3_BUCKET,S3_REGION,STORAGE_ARCHIVE,DB_ARCHIVE,STRIP_COMPONENTS,APPEND_ZSTD_EOF_MARKER ./convert "${{ inputs.id }}"
 
       - name: Upload archive to S3
         env:

@@ -9,7 +9,8 @@ usage() {
     echo "  Environment variables:"
     echo "    STORAGE_ARCHIVE   Name of the storage tar archive, optionally compressed (default: dump.tar)"
     echo "    DB_ARCHIVE        Name of the DB SQL dump archive (default: dump.sql.xz)"
-    echo "    STRIP_COMPONENTS  Number of leading path components to strip when extracting storage archive (default: none)"
+    echo "    STRIP_COMPONENTS         Number of leading path components to strip when extracting storage archive (default: none)"
+    echo "    APPEND_ZSTD_EOF_MARKER   Append zstd EOF marker to extracted .zst/.zstd files in storage archive (default: false)"
     exit 1
 }
 
@@ -21,6 +22,7 @@ DUMP_ID="$1"
 STORAGE_ARCHIVE="${STORAGE_ARCHIVE:-dump.tar}"
 DB_ARCHIVE="${DB_ARCHIVE:-dump.sql.xz}"
 STRIP_COMPONENTS="${STRIP_COMPONENTS:-}"
+APPEND_ZSTD_EOF_MARKER="${APPEND_ZSTD_EOF_MARKER:-false}"
 S3_BUCKET="${S3_BUCKET:-trustify-dumps-ds4}"
 S3_REGION="${S3_REGION:-eu-west-1}"
 BASE_URL="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${DUMP_ID}"
@@ -127,6 +129,13 @@ echo "==> Extracting ${STORAGE_ARCHIVE} into work directory"
 TAR_ARGS=(-xaf "${DOWNLOAD_DIR}/${STORAGE_ARCHIVE}" -C "${WORK_DIR}/storage")
 [[ -n "${STRIP_COMPONENTS}" ]] && TAR_ARGS+=(--strip-components="${STRIP_COMPONENTS}")
 tar "${TAR_ARGS[@]}"
+
+if [[ "${APPEND_ZSTD_EOF_MARKER}" == "true" ]]; then
+    echo "==> Appending zstd EOF marker to .zst/.zstd files in storage"
+    while IFS= read -r -d '' f; do
+        printf '\x01\x00\x00' >> "${f}"
+    done < <(find "${WORK_DIR}/storage" \( -name '*.zst' -o -name '*.zstd' \) -print0)
+fi
 
 echo "==> Creating tar archive"
 
